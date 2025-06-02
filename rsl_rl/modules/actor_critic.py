@@ -11,6 +11,8 @@ from torch.distributions import Normal
 
 from rsl_rl.utils import resolve_nn_activation
 
+from rsl_rl.modules.normalizer import EmpiricalNormalization
+
 
 class ActorCritic(nn.Module):
     is_recurrent = False
@@ -25,6 +27,7 @@ class ActorCritic(nn.Module):
         activation="elu",
         init_noise_std=1.0,
         noise_std_type: str = "scalar",
+        normalize_obs: bool = False,
         **kwargs,
     ):
         if kwargs:
@@ -37,6 +40,14 @@ class ActorCritic(nn.Module):
 
         mlp_input_dim_a = num_actor_obs
         mlp_input_dim_c = num_critic_obs
+
+        if normalize_obs:
+            self.normalizer_a = EmpiricalNormalization(mlp_input_dim_a)
+            self.normalizer_c = EmpiricalNormalization(mlp_input_dim_c)
+            self.normalize_obs = True
+        else:
+            self.normalize_obs = False
+
         # Policy
         actor_layers = []
         actor_layers.append(nn.Linear(mlp_input_dim_a, actor_hidden_dims[0]))
@@ -106,6 +117,8 @@ class ActorCritic(nn.Module):
 
     def update_distribution(self, observations):
         # compute mean
+        if self.normalize_obs:
+            observations = self.normalizer_a(observations)
         mean = self.actor(observations)
         # compute standard deviation
         if self.noise_std_type == "scalar":
@@ -118,6 +131,8 @@ class ActorCritic(nn.Module):
         self.distribution = Normal(mean, std)
 
     def act(self, observations, **kwargs):
+        if self.normalize_obs:
+            observations = self.normalizer_a(observations)
         self.update_distribution(observations)
         return self.distribution.sample()
 
@@ -125,10 +140,14 @@ class ActorCritic(nn.Module):
         return self.distribution.log_prob(actions).sum(dim=-1)
 
     def act_inference(self, observations):
+        if self.normalize_obs:
+            observations = self.normalizer_a(observations)
         actions_mean = self.actor(observations)
         return actions_mean
 
     def evaluate(self, critic_observations, **kwargs):
+        if self.normalize_obs:
+            critic_observations = self.normalizer_c(critic_observations)
         value = self.critic(critic_observations)
         return value
 
